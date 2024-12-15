@@ -19,25 +19,6 @@ void execute_command(char *input) {
     // Komutları ayıkla
     parse_command(input, args);
 
-    // Giriş yönlendirme (input < dosya)
-    if (strstr(input, "<") != NULL) {
-        char *input_file = strtok(input, "<");
-        strtok(NULL, " ");  // boşluğu atla
-        char *file_name = strtok(NULL, " ");
-        if (redirect_input(file_name) == -1) {
-            return;
-        }
-    }
-
-    // Çıkış yönlendirme (output > dosya)
-    if (strstr(input, ">") != NULL) {
-        char *output_file = strtok(input, ">");
-        strtok(NULL, " ");  // boşluğu atla
-        char *file_name = strtok(NULL, " ");
-        if (redirect_output(file_name) == -1) {
-            return;
-        }
-    }
 
     // Boru (pipe) işlemleri için
     if (strstr(input, "|") != NULL) {
@@ -45,7 +26,7 @@ void execute_command(char *input) {
         return;
     }
 
-    // Komut çalıştırma
+    // Komut çalıştırma işlemleri burada
     pid_t pid = fork();
     if (pid == 0) {
         // Çocuk süreç
