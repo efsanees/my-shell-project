@@ -68,7 +68,7 @@ void execute_command(char *input) {
     }
 }
 
-// Quit komutunun işlemi
+// Quit komutunun işlemi burada yapılıyor
 void quit_shell() {
     printf("Çıkılıyor...\n");
     exit(0);
