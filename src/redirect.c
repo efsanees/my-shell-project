@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <string.h>
 
+// Giriş yönlendirmesi
 void input_redirect(char *file) {
     int fd = open(file, O_RDONLY);  // Dosyayı okuma modunda aç
     if (fd == -1) {  // Dosya açılamazsa, hata mesajı ver
@@ -16,7 +17,6 @@ void input_redirect(char *file) {
     dup2(fd, STDIN_FILENO);  // Standart girişi (stdin) dosyaya yönlendir
     close(fd);  // Dosya tanımlayıcısını kapat
 }
-
 
 // Çıkış yönlendirmesi: komutun çıktısını dosyaya yönlendirir
 void output_redirect(char *file) {
@@ -29,7 +29,6 @@ void output_redirect(char *file) {
     close(fd);
 }
 
-
 // Yönlendirme ile komut çalıştırma
 void execute_command_with_redirect(char *cmd, char *input_file, char *output_file) {
     pid_t pid = fork();  // Yeni bir çocuk işlem oluştur
@@ -41,10 +40,10 @@ void execute_command_with_redirect(char *cmd, char *input_file, char *output_fil
 
     if (pid == 0) {  // Çocuk işlemde
         if (input_file != NULL) {
-            input_redirect(input_file);  // Giriş yönlendirmesini uygula
+            input_redirect(input_file);  // Giriş dosyasını yönlendir
         }
         if (output_file != NULL) {
-            output_redirect(output_file);  // Çıkış yönlendirmesini uygula
+            output_redirect(output_file);  // Çıkış dosyasını yönlendir
         }
 
         // Komutları çalıştır

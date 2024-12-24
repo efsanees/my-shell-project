@@ -1,29 +1,65 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>  // fork ve execvp için gerekli
-#include <sys/wait.h>  // wait için gerekli
-#include "builtins.h"  // quit ve diğer komutlar için gerekli
-#include "background.h" // Arkaplan komutları için gerekli
-#include "redirect.h"  // Yönlendirme için gerekli
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <signal.h>
 
-// Komutları işleyen fonksiyon
+#define MAX_COMMAND_SIZE 1024
+#define MAX_ARGS 128
+
+// Giriş yönlendirmesi
+void input_redirect(const char *file_name) {
+    int input_fd = open(file_name, O_RDONLY);
+    if (input_fd == -1) {
+        perror("Dosya açılamadı");
+        exit(EXIT_FAILURE);
+    }
+    dup2(input_fd, STDIN_FILENO);  // stdin'e yönlendir
+    close(input_fd);
+}
+
+// Çıkış yönlendirmesi
+void output_redirect(const char *file_name) {
+    int output_fd = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (output_fd == -1) {
+        perror("Dosya açılamadı");
+        exit(EXIT_FAILURE);
+    }
+    dup2(output_fd, STDOUT_FILENO);  // stdout'a yönlendir
+    close(output_fd);
+}
+
+// Arka plan işlemlerinin sonlanmasını bekle
+void wait_for_background_processes() {
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (WIFEXITED(status)) {
+            int exit_code = WEXITSTATUS(status);
+            printf("[%d] retval: %d\n", pid, exit_code);
+        }
+    }
+}
+
+// Komutları çalıştıran ana fonksiyon
 void handle_command(char *command) {
-    // Argümanları ayır
-    char *args[128];
+    char *args[MAX_ARGS];
     int i = 0;
+    int background = 0;
 
+    // Komutları ayır
     char *token = strtok(command, " ");
-    while (token != NULL && i < 127) {
+    while (token != NULL && i < MAX_ARGS - 1) {
         args[i] = token;
         token = strtok(NULL, " ");
         i++;
     }
     args[i] = NULL;
 
-    // Eğer giriş yönlendirmesi varsa
+    // Eğer 'cat' komutu ise ve giriş yönlendirmesi varsa, dosyayı oku
     if (strchr(command, '<')) {
-        // Giriş yönlendirmesi işleme
         char *input_file = strtok(command, "<");
         input_file = strtok(NULL, " ");  // Dosya adı
         if (input_file) {
@@ -36,7 +72,6 @@ void handle_command(char *command) {
 
     // Eğer çıkış yönlendirmesi varsa
     if (strchr(command, '>')) {
-        // Çıkış yönlendirmesi işleme
         char *output_file = strtok(command, ">");
         output_file = strtok(NULL, " ");  // Dosya adı
         if (output_file) {
@@ -47,63 +82,66 @@ void handle_command(char *command) {
         }
     }
 
-    // Arkaplan komutu kontrol et
-    pid_t pid = fork();
+    // Arka planda çalışıp çalışmadığını kontrol et
+    if (args[i - 1] != NULL && strcmp(args[i - 1], "&") == 0) {
+        background = 1;
+        args[i - 1] = NULL;  // Arka planda çalışıyorsa '&'i kaldır
+    }
 
+    // Komut çalıştırılacak
+    pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
-        // Çocuk süreç (komut çalıştır)
+        // Çocuk süreç: komut çalıştırma
         if (execvp(args[0], args) == -1) {
             perror("execvp");
             exit(EXIT_FAILURE);
         }
     } else {
-        // Ebeveyn süreç (çocuk süreci bekle)
-        int status;
-        waitpid(pid, &status, 0);
+        if (background) {
+            // Arka planda çalışacaksa PID'yi hemen yazdır
+            printf("[%d] %s\n", pid, command);
+        } else {
+            // Çocuk süreç bitene kadar bekle
+            int status;
+            waitpid(pid, &status, 0);
+            if (WIFEXITED(status)) {
+                int exit_code = WEXITSTATUS(status);
+                printf("[%d] retval: %d\n", pid, exit_code);
+            }
+        }
     }
 }
 
-// Main fonksiyonu
+// Ana shell fonksiyonu
 int main() {
-    char input[1024];  // Komut girişi için tampon
-    int status = 1;    // Kabuk çalıştığı sürece devam edecek
+    char command[MAX_COMMAND_SIZE];
 
-    while (status) {
-        printf("> ");  // Komut istemi
-        fflush(stdout);
+    while (1) {
+        // Her komut öncesinde prompt'u yazdır
+        printf("ubuntu@ubuntu:~/my-shell-project$ > ");
         
-        // Kullanıcıdan giriş al
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+        // Kullanıcıdan komut al
+        if (!fgets(command, sizeof(command), stdin)) {
+            break;  // Eğer giriş okuma hatası olursa çık
+        }
+
+        // Satır sonundaki yeni satır karakterini sil
+        command[strcspn(command, "\n")] = 0;
+
+        // Eğer "quit" komutu yazılırsa shell'den çık
+        if (strcmp(command, "quit") == 0) {
+            wait_for_background_processes();  // Arka plan işlemleri sonlandırılacak
             break;
         }
 
-        // Yeni satır karakterini temizle
-        input[strcspn(input, "\n")] = 0;
+        // Komutu işle
+        handle_command(command);
 
-        // Komut analizini yap
-        char *command = strtok(input, "\n");
-
-        // NULL kontrolü
-        if (command == NULL) {
-            continue;
-        }
-
-        // Quit komutu
-        if (strcmp(command, "quit") == 0) {
-            printf("Çıkılıyor...\n");
-            break;  // Döngüden çık
-        }
-
-        // Arkaplan komutları
-        if (command[strlen(command) - 1] == '&') {
-            command[strlen(command) - 1] = '\0';  // '&' karakterini kaldır
-            handle_background(command);  // Arkaplan komutunu çalıştır
-        } else {
-            handle_command(command);  // Diğer komutları çalıştır
-        }
+        // Arka planda çalışan süreçleri bekle
+        wait_for_background_processes();
     }
 
     return 0;
