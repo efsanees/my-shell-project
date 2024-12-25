@@ -141,12 +141,10 @@ void execute_piped_commands(char *commands[], int num_commands) {
 
 }
 
-// Function to handle background processes
 void execute_in_background(char *command) {
     char *args[MAX_ARGS];
     int i = 0;
 
-    // Tokenize the command
     char *token = strtok(command, " ");
     while (token != NULL) {
         args[i++] = token;
@@ -156,12 +154,10 @@ void execute_in_background(char *command) {
 
     pid_t pid = fork();
     if (pid == 0) {
-        // Child process
         execvp(args[0], args);
         perror("Background command execution failed");
         exit(EXIT_FAILURE);
     } else if (pid > 0) {
-        // Parent process does not wait for the child
         background_pids[background_pid_count++] = pid; // Track background PID
         printf("[Background PID %d]\n", pid);
     } else {
