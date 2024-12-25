@@ -113,13 +113,18 @@ void handle_command(char *command) {
             }
         }
     }
-}
+    
+
+    }
 
 // Ana shell fonksiyonu
 int main() {
     char command[MAX_COMMAND_SIZE];
 
-    while (1) {
+    while (1) 
+    {
+        
+        printf("\n");
         // Her komut öncesinde prompt'u yazdır
         printf("ubuntu@ubuntu:~/my-shell-project$ > ");
         

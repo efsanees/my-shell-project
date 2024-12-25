@@ -1,50 +1,68 @@
-#include "background.h"
-#include "utils.h"
-#include <unistd.h>
-#include <string.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>  // PID türü için eklenmeli
-#include <sys/wait.h>   // waitpid için eklenmeli
+#include <sys/wait.h>
+#include <unistd.h>
+#include <string.h>
 
+// Arka plan süreçlerin takibi için global liste
+pid_t background_processes[128];
+int process_count = 0;
+
+// Arka plan süreçlerin sona ermesini izleyen sinyal işleyici
+void background_process_handler(int sig) {
+    int status;
+    pid_t pid;
+
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("[%d] retval: %d\n", pid, WEXITSTATUS(status));
+        // Süreci listeden çıkar
+        for (int i = 0; i < process_count; i++) {
+            if (background_processes[i] == pid) {
+                background_processes[i] = background_processes[--process_count];
+                break;
+            }
+        }
+    }
+}
+
+// Arka planda komut çalıştırma
 void handle_background(char *command) {
-    // '&' karakterini komuttan kaldır
-    command[strlen(command) - 1] = '\0';
+    command[strlen(command) - 1] = '\0'; // '&' karakterini kaldır
 
-    // Komutu ve argümanlarını ayrıştır
     char *args[128];
     int i = 0;
 
     char *token = strtok(command, " ");
     while (token != NULL && i < 127) {
-        args[i] = token;
+        args[i++] = token;
         token = strtok(NULL, " ");
-        i++;
     }
-    if (i >= 127) {
-        fprintf(stderr, "Hata: Çok fazla argüman.\n");
-        return;
-    }
-    args[i] = NULL;  // Argüman dizisinin sonunu belirt
+    args[i] = NULL;
 
-    pid_t pid = fork();  // Yeni bir işlem (child process) oluştur
+    pid_t pid = fork(); // Çocuk işlem oluştur
 
     if (pid == -1) {
         perror("Fork başarısız oldu");
         return;
     }
 
-    if (pid == 0) {  // Çocuk işlemi
-        // Komutu çalıştır
+    if (pid == 0) { // Çocuk işlem
         if (execvp(args[0], args) == -1) {
-            perror(args[0]);  // Komut hatası ile birlikte belirtilir
-            exit(1);
+            perror(args[0]);
+            exit(EXIT_FAILURE);
         }
-    } else {  // Ebeveyn işlemi
-        printf("Arka planda %s komutu çalıştırılıyor... [PID: %d]\n", args[0], pid);
+    } else { // Ebeveyn işlem
+        background_processes[process_count++] = pid;
+        printf("[%d] Arka planda çalıştırılıyor...\n", pid);
+    }
+}
 
-        // Arka plan işleminin durumunu izlemek için isteğe bağlı kod
+// Tüm arka plan süreçleri bekle
+void wait_for_all_background_processes() {
+    for (int i = 0; i < process_count; i++) {
         int status;
-        waitpid(pid, &status, WNOHANG);  // Beklemeden durum kontrolü
+        waitpid(background_processes[i], &status, 0);
+        printf("[%d] retval: %d\n", background_processes[i], WEXITSTATUS(status));
     }
 }
