@@ -80,7 +80,33 @@ void execute_command(char *command) {
         perror("Fork failed");
     }
 }
+// Function to handle background processes
+void execute_in_background(char *command) {
+    char *args[MAX_ARGS];
+    int i = 0;
 
+    // Tokenize the command
+    char *token = strtok(command, " ");
+    while (token != NULL) {
+        args[i++] = token;
+        token = strtok(NULL, " ");
+    }
+    args[i] = NULL;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process
+        execvp(args[0], args);
+        perror("Background command execution failed");
+        exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+        // Parent process does not wait for the child
+        background_pids[background_pid_count++] = pid; // Track background PID
+        printf("[Background PID %d]\n", pid);
+    } else {
+        perror("Fork failed");
+    }
+}
 // Function to execute commands connected by pipes
 void execute_piped_commands(char *commands[], int num_commands) {
     int pipe_fd[2];
@@ -141,30 +167,6 @@ void execute_piped_commands(char *commands[], int num_commands) {
 
 }
 
-void execute_in_background(char *command) {
-    char *args[MAX_ARGS];
-    int i = 0;
-
-    char *token = strtok(command, " ");
-    while (token != NULL) {
-        args[i++] = token;
-        token = strtok(NULL, " ");
-    }
-    args[i] = NULL;
-
-    pid_t pid = fork();
-    if (pid == 0) {
-        execvp(args[0], args);
-        perror("Background command execution failed");
-        exit(EXIT_FAILURE);
-    } else if (pid > 0) {
-        background_pids[background_pid_count++] = pid; // Track background PID
-        printf("[Background PID %d]\n", pid);
-    } else {
-        perror("Fork failed");
-    }
-}
-
 // Function to wait for all background processes to finish and report exit status
 void wait_for_background_processes() {
     for (int i = 0; i < background_pid_count; i++) {
@@ -186,10 +188,6 @@ int main() {
         // Read user input
         if (fgets(command, sizeof(command), stdin) == NULL) {
             break; // Exit on EOF
-        }
-
-        if (strcmp(command, "increment") == 0) {
-            increment();  // Increment fonksiyonunu çağırıyoruz
         }
 
         // Handle built-in "quit" command
