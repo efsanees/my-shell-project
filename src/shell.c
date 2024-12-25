@@ -2,151 +2,223 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
 
-#define MAX_COMMAND_SIZE 1024
+#define MAX_COMMAND_LENGTH 1024
 #define MAX_ARGS 128
+#define MAX_BACKGROUND_PROCESSES 128
 
-// Giriş yönlendirmesi
-void input_redirect(const char *file_name) {
-    int input_fd = open(file_name, O_RDONLY);
-    if (input_fd == -1) {
-        perror("Dosya açılamadı");
-        exit(EXIT_FAILURE);
-    }
-    dup2(input_fd, STDIN_FILENO);  // stdin'e yönlendir
-    close(input_fd);
+// Background process tracking
+pid_t background_pids[MAX_BACKGROUND_PROCESSES];
+int background_pid_count = 0;
+
+// Function to print the shell prompt
+void print_prompt() {
+    printf("> ");
+    fflush(stdout); // Ensure prompt is immediately visible
 }
 
-// Çıkış yönlendirmesi
-void output_redirect(const char *file_name) {
-    int output_fd = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (output_fd == -1) {
-        perror("Dosya açılamadı");
-        exit(EXIT_FAILURE);
-    }
-    dup2(output_fd, STDOUT_FILENO);  // stdout'a yönlendir
-    close(output_fd);
-}
-
-// Arka plan işlemlerinin sonlanmasını bekle
-void wait_for_background_processes() {
-    int status;
-    pid_t pid;
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (WIFEXITED(status)) {
-            int exit_code = WEXITSTATUS(status);
-            printf("[%d] retval: %d\n", pid, exit_code);
+// Function to handle input and output redirection
+void handle_redirection(char *args[], int *input_fd, int *output_fd) {
+    for (int i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "<") == 0) {
+            *input_fd = open(args[i + 1], O_RDONLY);
+            if (*input_fd < 0) {
+                fprintf(stderr, "%s giriş dosyası bulunamadı.\n", args[i + 1]);
+                return;
+            }
+            args[i] = NULL;
+        } else if (strcmp(args[i], ">") == 0) {
+            *output_fd = open(args[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (*output_fd < 0) {
+                perror("Output file error");
+                exit(EXIT_FAILURE);
+            }
+            args[i] = NULL;
         }
     }
 }
 
-// Komutları çalıştıran ana fonksiyon
-void handle_command(char *command) {
+// Function to execute a single command
+void execute_command(char *command) {
     char *args[MAX_ARGS];
+    int input_fd = -1, output_fd = -1;
     int i = 0;
-    int background = 0;
 
-    // Komutları ayır
+    // Tokenize the command
     char *token = strtok(command, " ");
-    while (token != NULL && i < MAX_ARGS - 1) {
-        args[i] = token;
+    while (token != NULL) {
+        args[i++] = token;
         token = strtok(NULL, " ");
-        i++;
     }
     args[i] = NULL;
 
-    // Eğer 'cat' komutu ise ve giriş yönlendirmesi varsa, dosyayı oku
-    if (strchr(command, '<')) {
-        char *input_file = strtok(command, "<");
-        input_file = strtok(NULL, " ");  // Dosya adı
-        if (input_file) {
-            input_redirect(input_file);  // Giriş dosyasını yönlendir
-        } else {
-            fprintf(stderr, "Giriş dosyası bulunamadı\n");
-            return;
-        }
-    }
+    // Handle I/O redirection
+    handle_redirection(args, &input_fd, &output_fd);
 
-    // Eğer çıkış yönlendirmesi varsa
-    if (strchr(command, '>')) {
-        char *output_file = strtok(command, ">");
-        output_file = strtok(NULL, " ");  // Dosya adı
-        if (output_file) {
-            output_redirect(output_file);  // Çıkış dosyasını yönlendir
-        } else {
-            fprintf(stderr, "Çıkış dosyası açılamadı\n");
-            return;
-        }
-    }
-
-    // Arka planda çalışıp çalışmadığını kontrol et
-    if (args[i - 1] != NULL && strcmp(args[i - 1], "&") == 0) {
-        background = 1;
-        args[i - 1] = NULL;  // Arka planda çalışıyorsa '&'i kaldır
-    }
-
-    // Komut çalıştırılacak
     pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
+    if (pid == 0) {
+        // Child process
+        if (input_fd != -1) {
+            dup2(input_fd, STDIN_FILENO);
+            close(input_fd);
+        }
+        if (output_fd != -1) {
+            dup2(output_fd, STDOUT_FILENO);
+            close(output_fd);
+        }
+        execvp(args[0], args);
+        perror("Command execution failed");
         exit(EXIT_FAILURE);
-    } else if (pid == 0) {
-        // Çocuk süreç: komut çalıştırma
-        if (execvp(args[0], args) == -1) {
-            perror("execvp");
+    } else if (pid > 0) {
+        int status;
+        waitpid(pid, &status, 0);  // Parent process waits for the child
+    } else {
+        perror("Fork failed");
+    }
+}
+
+// Function to execute commands connected by pipes
+void execute_piped_commands(char *commands[], int num_commands) {
+    int pipe_fd[2];
+    int input_fd = STDIN_FILENO;
+
+    for (int i = 0; i < num_commands; i++) {
+        // Create pipe
+        if (pipe(pipe_fd) == -1) {
+            perror("Pipe creation failed");
             exit(EXIT_FAILURE);
         }
-    } else {
-        if (background) {
-            // Arka planda çalışacaksa PID'yi hemen yazdır
-            printf("[%d] %s\n", pid, command);
-        } else {
-            // Çocuk süreç bitene kadar bekle
-            int status;
-            waitpid(pid, &status, 0);
-            if (WIFEXITED(status)) {
-                int exit_code = WEXITSTATUS(status);
-                printf("[%d] retval: %d\n", pid, exit_code);
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Child process
+
+            // Redirect input from previous pipe (if not the first command)
+            dup2(input_fd, STDIN_FILENO);
+            close(input_fd);
+
+            // If this is not the last command, redirect output to the next pipe
+            if (i < num_commands - 1) {
+                dup2(pipe_fd[1], STDOUT_FILENO);
             }
+            close(pipe_fd[0]);
+            close(pipe_fd[1]);
+
+            // Parse the current command into arguments
+            char *args[MAX_ARGS];
+            int j = 0;
+            char *token = strtok(commands[i], " ");
+            while (token != NULL) {
+                args[j++] = token;
+                token = strtok(NULL, " ");
+            }
+            args[j] = NULL;
+
+            // Execute the command
+            execvp(args[0], args);
+            perror("Command execution failed");
+            exit(EXIT_FAILURE);
+        } else if (pid > 0) {
+            // Parent process
+            close(pipe_fd[1]);
+
+            // The input for the next command is the read end of the current pipe
+            input_fd = pipe_fd[0];
+        } else {
+            perror("Fork failed");
+            exit(EXIT_FAILURE);
         }
     }
-    
 
+    // Wait for all child processes to finish
+    for (int i = 0; i < num_commands; i++) {
+        wait(NULL);
     }
 
-// Ana shell fonksiyonu
+}
+
+// Function to wait for all background processes to finish and report exit status
+void wait_for_background_processes() {
+    for (int i = 0; i < background_pid_count; i++) {
+        int status;
+        pid_t pid = waitpid(background_pids[i], &status, WNOHANG);  // Non-blocking wait
+        if (pid > 0) {
+            printf("[%d] retval: %d\n", pid, WEXITSTATUS(status)); // Print PID and exit status
+        }
+    }
+}
+
+// Main shell loop
 int main() {
-    char command[MAX_COMMAND_SIZE];
+    char command[MAX_COMMAND_LENGTH];
 
-    while (1) 
-    {
-        
-        printf("\n");
-        // Her komut öncesinde prompt'u yazdır
-        printf("ubuntu@ubuntu:~/my-shell-project$ > ");
-        
-        // Kullanıcıdan komut al
-        if (!fgets(command, sizeof(command), stdin)) {
-            break;  // Eğer giriş okuma hatası olursa çık
+    while (1) {
+        print_prompt();
+
+        // Read user input
+        if (fgets(command, sizeof(command), stdin) == NULL) {
+            break; // Exit on EOF
         }
 
-        // Satır sonundaki yeni satır karakterini sil
-        command[strcspn(command, "\n")] = 0;
+        if (strcmp(command, "increment") == 0) {
+            increment();  // Increment fonksiyonunu çağırıyoruz
+        }
 
-        // Eğer "quit" komutu yazılırsa shell'den çık
+        // Handle built-in "quit" command
         if (strcmp(command, "quit") == 0) {
-            wait_for_background_processes();  // Arka plan işlemleri sonlandırılacak
+            printf("Exiting shell...\n");
+
+            // Wait for background processes to finish before exiting
+            wait_for_background_processes();
             break;
         }
 
-        // Komutu işle
-        handle_command(command);
+        // Check for background process
+        if (strchr(command, '&') != NULL) {
+            *strchr(command, '&') = '\0'; // Remove '&'
+            execute_in_background(command);
+            // Immediately print the prompt again
+            continue;
+        }
+        // Check for pipes
+        else if (strchr(command, '|') != NULL) {
+            char *commands[MAX_ARGS];
+            int num_commands = 0;
 
-        // Arka planda çalışan süreçleri bekle
+            char *token = strtok(command, "|");
+            while (token != NULL) {
+                commands[num_commands++] = token;
+                token = strtok(NULL, "|");
+            }
+            execute_piped_commands(commands, num_commands);
+        }
+        // Check for semicolon separated commands
+        else if (strchr(command, ';') != NULL) {
+            char *commands[MAX_ARGS];
+            int num_commands = 0;
+
+            char *token = strtok(command, ";");
+            while (token != NULL) {
+                commands[num_commands++] = token;
+                token = strtok(NULL, ";");
+            }
+            // Execute each command sequentially
+            for (int i = 0; i < num_commands; i++) {
+                execute_command(commands[i]);
+            }
+        }
+        // Execute single command
+        else {
+            execute_command(command);
+        }
+
+        // After every input, check for finished background processes
         wait_for_background_processes();
+
     }
 
     return 0;
