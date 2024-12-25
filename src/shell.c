@@ -80,6 +80,7 @@ void execute_command(char *command) {
         perror("Fork failed");
     }
 }
+
 // Function to handle background processes
 void execute_in_background(char *command) {
     char *args[MAX_ARGS];
@@ -92,6 +93,11 @@ void execute_in_background(char *command) {
         token = strtok(NULL, " ");
     }
     args[i] = NULL;
+
+    // Check if the command is 'sleep' and print a message
+    if (strcmp(args[0], "sleep") == 0) {
+        printf("The 'sleep' command is running in the background.\n");
+    }
 
     pid_t pid = fork();
     if (pid == 0) {
@@ -107,6 +113,7 @@ void execute_in_background(char *command) {
         perror("Fork failed");
     }
 }
+
 // Function to execute commands connected by pipes
 void execute_piped_commands(char *commands[], int num_commands) {
     int pipe_fd[2];
@@ -164,7 +171,6 @@ void execute_piped_commands(char *commands[], int num_commands) {
     for (int i = 0; i < num_commands; i++) {
         wait(NULL);
     }
-
 }
 
 // Function to wait for all background processes to finish and report exit status
@@ -190,6 +196,9 @@ int main() {
             break; // Exit on EOF
         }
 
+        // Remove trailing newline character from command
+        command[strcspn(command, "\n")] = '\0';
+
         // Handle built-in "quit" command
         if (strcmp(command, "quit") == 0) {
             printf("Exiting shell...\n");
@@ -199,13 +208,13 @@ int main() {
             break;
         }
 
-        // Check for background process
+        // Check if there's a background process (command ends with '&')
         if (strchr(command, '&') != NULL) {
             *strchr(command, '&') = '\0'; // Remove '&'
             execute_in_background(command);
-            // Immediately print the prompt again
-            continue;
+            continue;  // Continue with the next input immediately
         }
+
         // Check for pipes
         else if (strchr(command, '|') != NULL) {
             char *commands[MAX_ARGS];
@@ -240,8 +249,8 @@ int main() {
 
         // After every input, check for finished background processes
         wait_for_background_processes();
-
     }
 
     return 0;
 }
+
