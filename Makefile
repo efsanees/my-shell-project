@@ -9,8 +9,8 @@ $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ)
 
 # Objeleri oluştur
-$(OBJ): src/shell.c # Her iki dosyayı da burada belirtin
-	$(CC) $(CFLAGS) -c src/shell.c
+$(OBJ): $(SRC)
+	$(CC) $(CFLAGS) -c $(SRC) -o $(OBJ)
 
 # Temizlik
 clean:
@@ -19,3 +19,6 @@ clean:
 # Çalıştırma
 run: $(TARGET)
 	./$(TARGET)
+
+# Header dosyaları için otomatik bağımlılık
+%.o: %.c %.h
